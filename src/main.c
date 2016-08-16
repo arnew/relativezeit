@@ -13,7 +13,16 @@ static TextLayer *s_weather_layer;
 static GFont s_weather_font;
 
 char* empty = "";
-static uint32_t precision;
+static uint64_t precision;
+
+int CountOnesFromInteger(uint64_t value) {
+    int count =0;
+  while(value != 0) {
+    count++;
+    value &= value-1;
+  }
+    return count;
+}
 
 static void verticalAlignTextLayer(TextLayer *layer) {
     GRect frame = layer_get_frame(text_layer_get_layer(layer));
@@ -26,7 +35,19 @@ static void verticalAlignTextLayer(TextLayer *layer) {
 static void update_time() {
   // Get a tm structure
   time_t temp = time(NULL);
-  double adjustor =0x80000000*60.0/(1.0+precision);
+  double adjustor =   (
+    // 0 ones -> no activity in last 1 hour
+    // 32 ones -> full activity in last 1 hour
+    (32.0-CountOnesFromInteger(precision&0xffffffff))/32 * SECONDS_PER_MINUTE/2 + 
+    // 
+    
+    (16.0-CountOnesFromInteger((precision>>32)&0xffff))/16 * SECONDS_PER_MINUTE*2.5 + 
+    
+    (12.0-CountOnesFromInteger((precision>>48)&0xfff))/12 * SECONDS_PER_MINUTE*7.5 + 
+    
+    (4.0-CountOnesFromInteger((precision>>60)&0xf))/4 * 60*30 
+                      )/4
+                       ;
   //temp = ((temp + adjustor/2)/adjustor)*adjustor;
 
   // Write the current hours and minutes into a buffer
@@ -66,40 +87,41 @@ layer = s_timerough_layer;
 
   #if DEBUG
    static char s_buffer2[20];
-  snprintf(s_buffer2, sizeof(s_buffer2), "%u\n%u", (unsigned int) adjustor, (unsigned int) precision);  
+  snprintf(s_buffer2, sizeof(s_buffer2), "%i %i\n%i %i\n%u", 
+           CountOnesFromInteger(precision),
+           CountOnesFromInteger(precision>>32),
+           CountOnesFromInteger(precision>>48),
+           CountOnesFromInteger(precision>>60),
+           (unsigned int) adjustor);
   text_layer_set_text(s_weather_layer, s_buffer2);
   #endif
 }
 
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   uint32_t old_precision = precision;
-  precision /= 1.005;
-  #if DEBUG >1
- precision /= 1+(DEBUG-1/20.0);
-  #endif
-  if(precision > old_precision ) 
-    precision = 1;
+    precision |= 1;
   update_time();
 }
+
+static void minute_handler(struct tm *tick_time, TimeUnits units_changed) {
+  uint32_t old_precision = precision;
+  precision /= 2;
+    precision |= 1;
+  update_time();
+}
+
 static void tap_handler(AccelAxisType axis, int32_t direction )
 {
-  uint32_t old_precision = precision;
-  precision++;
-  precision*=4;
-  if(precision < old_precision) 
-    precision = UINT32_MAX;
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "tap");
+  
+    precision |= 0x8000000000000000ull;
+  
   update_time();
 }
 static void focus_handler(bool in_focus){  
-  uint32_t old_precision = precision; 
-  precision++;
-  precision*=1.5;
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "focus");
   
-  if(precision < old_precision) 
-    precision = UINT32_MAX;
-  #if DEBUG > 10
-    precision = UINT32_MAX;
-  #endif
+    precision |= 0x8000000000000000ull;
    update_time();
 }
 
@@ -135,7 +157,7 @@ static void main_window_load(Window *window) {
 
   
   #if DEBUG
- s_weather_layer = text_layer_create(GRect(0, PBL_IF_ROUND_ELSE(125, 120), bounds.size.w, 40));
+ s_weather_layer = text_layer_create(GRect(0, PBL_IF_ROUND_ELSE(105, 100), bounds.size.w, 60));
 // Style the text
 text_layer_set_background_color(s_weather_layer, GColorClear);
 text_layer_set_text_color(s_weather_layer, GColorBlack);
@@ -164,16 +186,15 @@ fonts_unload_custom_font(s_weather_font);
 }
 
 static void init() {
-  precision = persist_read_int(0);
-  if(precision == 0) {
-  precision = 0x01000000;
-  } else {
-    #if DEBUG > 10
- precision *= 4;
-    #endif
-  }
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "init");
+
+  persist_read_data(0,&precision, sizeof(precision));
+  precision |= 0x8000000000000000ull;
+  
   // Register with TickTimerService
 tick_timer_service_subscribe(SECOND_UNIT, tick_handler);
+  
+tick_timer_service_subscribe(MINUTE_UNIT, minute_handler);
   accel_tap_service_subscribe(tap_handler);
   app_focus_service_subscribe(focus_handler);
   // Create main Window element and assign to pointer
@@ -195,7 +216,8 @@ update_time();
 static void deinit() {
  // Destroy Window
   window_destroy(s_main_window);
-  persist_write_int(0,precision);
+  persist_write_data(0,&precision, sizeof(precision));
+
 }
 
 int main(void) {
