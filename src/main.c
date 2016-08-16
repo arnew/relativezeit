@@ -13,7 +13,59 @@ static TextLayer *s_weather_layer;
 static GFont s_weather_font;
 
 char* empty = "";
-static uint64_t precision;
+typedef struct {
+  uint64_t seconds;
+  uint64_t minutes;
+  uint32_t hours;
+  uint32_t days;
+  uint32_t second_count, minute_count, hour_count;
+} precision_t;
+static precision_t precision;
+
+void touch_precision(precision_t *precision) {
+  precision->seconds |= 0x8000000000000000ull;  
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "precision %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
+
+}
+
+
+void shift_precision_seconds(precision_t *precision) {
+  precision->minutes |= (precision->seconds & 1)? 0x8000000000000000 : 0;
+  precision->seconds >>=1;
+  precision->second_count++;
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift seconds %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
+}
+void shift_precision_minutes(precision_t *precision) {
+  precision->hours |= (precision->minutes & 1)? 0x80000000 : 0;
+  precision->minutes >>=1; 
+    precision->minute_count++;
+  precision->second_count = 0;
+
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift minuts %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
+
+}
+void shift_precision_hours(precision_t *precision) {
+  precision->days |= (precision->hours & 1)? 0x80000000 : 0;
+  precision->hours >>=1;  
+      precision->hour_count++;
+precision->minute_count =0;
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift hours %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
+
+}
+void shift_precision_days(precision_t *precision) {
+  precision->days >>=1;  
+  precision->hour_count = 0;
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift days %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
+
+}
+
+
+void update_precision(precision_t *precision) {
+  shift_precision_seconds(precision);
+  if(precision->second_count == 60) shift_precision_minutes(precision);
+  if(precision->minute_count == 60) shift_precision_hours(precision);
+  if(precision->hour_count == 24) shift_precision_days(precision);
+}
 
 int CountOnesFromInteger(uint64_t value) {
     int count =0;
@@ -24,29 +76,17 @@ int CountOnesFromInteger(uint64_t value) {
     return count;
 }
 
-static void verticalAlignTextLayer(TextLayer *layer) {
-    GRect frame = layer_get_frame(text_layer_get_layer(layer));
-    GSize content = text_layer_get_content_size(layer);
-    layer_set_frame(text_layer_get_layer(layer),
-           GRect(frame.origin.x, frame.origin.y + (frame.size.h - content.h) / 2, 
-           frame.size.w, content.h));
-}
-
 static void update_time() {
   // Get a tm structure
   time_t temp = time(NULL);
-  double adjustor =   (
-    // 0 ones -> no activity in last 1 hour
-    // 32 ones -> full activity in last 1 hour
-    (32.0-CountOnesFromInteger(precision&0xffffffff))/32 * SECONDS_PER_MINUTE/2 + 
-    // 
-    
-    (16.0-CountOnesFromInteger((precision>>32)&0xffff))/16 * SECONDS_PER_MINUTE*2.5 + 
-    
-    (12.0-CountOnesFromInteger((precision>>48)&0xfff))/12 * SECONDS_PER_MINUTE*7.5 + 
-    
-    (4.0-CountOnesFromInteger((precision>>60)&0xf))/4 * 60*30 
-                      )/4
+  double adjustor =   ((60.0+60+24+31+80) -
+                       CountOnesFromInteger(precision.seconds>>60)*20 -
+    CountOnesFromInteger(precision.seconds) - 
+    CountOnesFromInteger(precision.minutes) - 
+    CountOnesFromInteger(precision.hours) -
+    CountOnesFromInteger(precision.days) 
+    )/(2*(60+60+24+31) )
+    * SECONDS_PER_DAY
                        ;
   //temp = ((temp + adjustor/2)/adjustor)*adjustor;
 
@@ -88,40 +128,32 @@ layer = s_timerough_layer;
   #if DEBUG
    static char s_buffer2[20];
   snprintf(s_buffer2, sizeof(s_buffer2), "%i %i\n%i %i\n%u", 
-           CountOnesFromInteger(precision),
-           CountOnesFromInteger(precision>>32),
-           CountOnesFromInteger(precision>>48),
-           CountOnesFromInteger(precision>>60),
+           CountOnesFromInteger(precision.seconds), 
+           CountOnesFromInteger(precision.minutes), 
+           CountOnesFromInteger(precision.hours), 
+           CountOnesFromInteger(precision.days),
            (unsigned int) adjustor);
   text_layer_set_text(s_weather_layer, s_buffer2);
   #endif
 }
 
-static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
-  uint32_t old_precision = precision;
-    precision |= 1;
+static void second_tick(struct tm *tick_time, TimeUnits units_changed) {
+  update_precision(&precision);
   update_time();
 }
 
-static void minute_handler(struct tm *tick_time, TimeUnits units_changed) {
-  uint32_t old_precision = precision;
-  precision /= 2;
-    precision |= 1;
-  update_time();
-}
 
 static void tap_handler(AccelAxisType axis, int32_t direction )
 {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "tap");
-  
-    precision |= 0x8000000000000000ull;
+  touch_precision(&precision);
   
   update_time();
 }
 static void focus_handler(bool in_focus){  
     APP_LOG(APP_LOG_LEVEL_DEBUG, "focus");
   
-    precision |= 0x8000000000000000ull;
+  touch_precision(&precision);
    update_time();
 }
 
@@ -188,13 +220,12 @@ fonts_unload_custom_font(s_weather_font);
 static void init() {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "init");
 
-  persist_read_data(0,&precision, sizeof(precision));
-  precision |= 0x8000000000000000ull;
+  persist_read_data(0,&precision, sizeof(precision_t));
+  touch_precision(&precision);
   
   // Register with TickTimerService
-tick_timer_service_subscribe(SECOND_UNIT, tick_handler);
+tick_timer_service_subscribe(SECOND_UNIT, second_tick);
   
-tick_timer_service_subscribe(MINUTE_UNIT, minute_handler);
   accel_tap_service_subscribe(tap_handler);
   app_focus_service_subscribe(focus_handler);
   // Create main Window element and assign to pointer
@@ -216,7 +247,7 @@ update_time();
 static void deinit() {
  // Destroy Window
   window_destroy(s_main_window);
-  persist_write_data(0,&precision, sizeof(precision));
+  persist_write_data(0,&precision, sizeof(precision_t));
 
 }
 
