@@ -1,0 +1,29 @@
+{
+    "author": "Arne Wichmann",
+    "dependencies": {},
+    "keywords": [],
+    "name": "relative-zeit",
+    "pebble": {
+        "capabilities": [
+            ""
+        ],
+        "displayName": "Relative Zeit",
+        "enableMultiJS": true,
+        "messageKeys": [],
+        "projectType": "native",
+        "resources": {
+            "media": []
+        },
+        "sdkVersion": "3",
+        "targetPlatforms": [
+            "aplite",
+            "basalt",
+            "chalk"
+        ],
+        "uuid": "26a3f863-2302-4e5f-b8fe-4ca4bd457faa",
+        "watchapp": {
+            "watchface": true
+        }
+    },
+    "version": "1.0.0"
+}
