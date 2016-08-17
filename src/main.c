@@ -77,9 +77,10 @@ void enforce_weights(precision_t *precision, weights_t * weights, float w, float
 
 void update_precision(precision_t *precision) {
   shift_precision_seconds(precision);
+  
   if(precision->second_count == 60) {
     shift_precision_minutes(precision);    
-    enforce_weights(precision, &weights, 0.99, 0.0);
+    enforce_weights(precision, &weights, 0.95, 0.0);
   }
   if(precision->minute_count == 60) {
     shift_precision_hours(precision);
@@ -169,12 +170,11 @@ static void update_time() {
   // Display this time on the TextLayer
   text_layer_set_text(layer, s_buffer);
   
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision: %i:%u %i:%u %i:%u %i %u %u", 
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision: %i:%u %i:%u %i:%u %i", 
            CountOnesFromInteger(precision.seconds), (unsigned int)precision.second_count,
            CountOnesFromInteger(precision.minutes), (unsigned int)precision.minute_count,
            CountOnesFromInteger(precision.hours), (unsigned int)precision.hour_count,
-           CountOnesFromInteger(precision.days),
-           (unsigned int) adjustor, (unsigned int) slow_adj);
+           CountOnesFromInteger(precision.days));
   APP_LOG(APP_LOG_LEVEL_DEBUG, "weights: %i %i %i %i %i", 
           (int)(10000*weights.a),
           (int)(10000*weights.b),
@@ -253,12 +253,13 @@ static void init() {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "init");
 
   // read state
-  persist_read_data(0,&precision, sizeof(precision_t));
+ persist_read_data(0,&precision, sizeof(precision_t));
   persist_read_data(1,&weights, sizeof(weights_t));
   if(weights.a == 0) {
     weights.a = weights.b = weights.c = weights.d = weights.e = 1;
   }
   touch_precision(&precision);
+    enforce_weights(&precision, &weights, 1.1, 0.0001);
   
   // Register with TickTimerService
   tick_timer_service_subscribe(SECOND_UNIT, second_tick);
