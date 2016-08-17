@@ -1,18 +1,12 @@
 #include <pebble.h>
 #include "main.h"
 
-#define DEBUG 0
-
 static Window *s_main_window;
 
 static char s_buffer[12];
 static TextLayer *s_timedetail_layer;
 static TextLayer *s_time_layer;
 static TextLayer *s_timerough_layer;
-#if DEBUG
-static TextLayer *s_weather_layer;
-#endif
-static GFont s_weather_font;
 
 char* empty = "";
 typedef struct {
@@ -23,52 +17,38 @@ typedef struct {
   uint32_t second_count, minute_count, hour_count;
 } precision_t;
 static precision_t precision;
+typedef struct {
+  float a,b,c,d,e;
+} weights_t;
+static weights_t weights;
 
 static uint64_t top64 = 0x8000000000000000ull;
 
 void touch_precision(precision_t *precision) {
   precision->seconds |=top64 ;  
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "precision %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
-
 }
-
 
 void shift_precision_seconds(precision_t *precision) {
   precision->minutes |= (precision->seconds & 1)? top64 : 0;
   precision->seconds >>=1;
   precision->second_count++;
-      APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift seconds %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
 }
 void shift_precision_minutes(precision_t *precision) {
   precision->hours |= (precision->minutes & 1)? 0x80000000 : 0;
   precision->minutes >>=1; 
-    precision->minute_count++;
+  precision->minute_count++;
   precision->second_count = 0;
-
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift minuts %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
-
 }
 void shift_precision_hours(precision_t *precision) {
   precision->days |= (precision->hours & 1)? 0x80000000 : 0;
   precision->hours >>=1;  
-      precision->hour_count++;
-precision->minute_count =0;
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift hours %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
-
+  precision->hour_count++;
+  precision->minute_count =0;
 }
+
 void shift_precision_days(precision_t *precision) {
   precision->days >>=1;  
   precision->hour_count = 0;
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision shift days %llx %llx %x %x", (unsigned long long)precision->seconds,(unsigned long long)precision->minutes, (unsigned int)precision->hours, (unsigned int)precision->days);
-
-}
-
-
-void update_precision(precision_t *precision) {
-  shift_precision_seconds(precision);
-  if(precision->second_count == 60) shift_precision_minutes(precision);
-  if(precision->minute_count == 60) shift_precision_hours(precision);
-  if(precision->hour_count == 24) shift_precision_days(precision);
 }
 
 int CountOnesFromInteger(uint64_t value) {
@@ -81,17 +61,44 @@ int CountOnesFromInteger(uint64_t value) {
 }
 static double slow_adj = 7;
 
+
+void enforce_weights(precision_t *precision, weights_t * weights, float w, float b) {
+  int i = CountOnesFromInteger(precision->seconds>>60),
+    j =CountOnesFromInteger(precision->seconds<<4),
+  k  = CountOnesFromInteger(precision->minutes),
+  l = CountOnesFromInteger(precision->hours),
+  m = CountOnesFromInteger(precision->days);
+  if(i) weights->a=(weights->a*w * (1+i/4)) + b;
+  if(j) weights->b=(weights->b*w * (1+j / 56)) + b;
+  if(k) weights->c=(weights->c*w * (1+k /60)) + b;
+  if(l) weights->d=(weights->d*w * (1+l/24)) + b;
+  if(m) weights->e=(weights->e*w * (1+m/31)) + b;
+}
+
+void update_precision(precision_t *precision) {
+  shift_precision_seconds(precision);
+  if(precision->second_count == 60) {
+    shift_precision_minutes(precision);    
+    enforce_weights(precision, &weights, 0.99, 0.0);
+  }
+  if(precision->minute_count == 60) {
+    shift_precision_hours(precision);
+  }
+  if(precision->hour_count == 24) shift_precision_days(precision);
+}
+
+
 static void update_time() {
   // Get a tm structure
   time_t temp = time(NULL);
   double adjustor = ( 
-    CountOnesFromInteger(precision.seconds>>60)?16:0)
-    + (CountOnesFromInteger(precision.seconds<<4)?4:0)
-    + (CountOnesFromInteger(precision.minutes)/60.0*8)
+    CountOnesFromInteger(precision.seconds>>60)*weights.a)
+    + (CountOnesFromInteger(precision.seconds<<4)*weights.b)
+    + (CountOnesFromInteger(precision.minutes)*weights.c)
     
-    + (CountOnesFromInteger(precision.hours)?4:0)
+    + (CountOnesFromInteger(precision.hours)*weights.d)
     
-    + (CountOnesFromInteger(precision.days)?0.5:0)
+    + (CountOnesFromInteger(precision.days)*weights.e)
     ;
   //temp = ((temp + adjustor/2)/adjustor)*adjustor;
 
@@ -161,23 +168,21 @@ static void update_time() {
 
   // Display this time on the TextLayer
   text_layer_set_text(layer, s_buffer);
-  //verticalAlignTextLayer(layer);
-
-  #if DEBUG
-   static char s_buffer2[20];
-  snprintf(s_buffer2, sizeof(s_buffer2), "%i:%u %i:%u\n%i:%u %i\n%u %u", 
+  
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "precision: %i:%u %i:%u %i:%u %i %u %u", 
            CountOnesFromInteger(precision.seconds), (unsigned int)precision.second_count,
            CountOnesFromInteger(precision.minutes), (unsigned int)precision.minute_count,
            CountOnesFromInteger(precision.hours), (unsigned int)precision.hour_count,
            CountOnesFromInteger(precision.days),
            (unsigned int) adjustor, (unsigned int) slow_adj);
-  text_layer_set_text(s_weather_layer, s_buffer2);
-  #endif
-  APP_LOG(APP_LOG_LEVEL_DEBUG, "%i:%u %i:%u %i:%u %i %u %u", 
-           CountOnesFromInteger(precision.seconds), (unsigned int)precision.second_count,
-           CountOnesFromInteger(precision.minutes), (unsigned int)precision.minute_count,
-           CountOnesFromInteger(precision.hours), (unsigned int)precision.hour_count,
-           CountOnesFromInteger(precision.days),
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "weights: %i %i %i %i %i", 
+          (int)(10000*weights.a),
+          (int)(10000*weights.b),
+          (int)(10000*weights.c),
+          (int)(10000*weights.d),
+          (int)(10000*weights.e)
+         );
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "relativity: %u %u", 
            (unsigned int) adjustor, (unsigned int) slow_adj);
 }
 
@@ -186,19 +191,17 @@ static void second_tick(struct tm *tick_time, TimeUnits units_changed) {
   update_time();
 }
 
-
 static void tap_handler(AccelAxisType axis, int32_t direction )
 {
   APP_LOG(APP_LOG_LEVEL_DEBUG, "tap");
   touch_precision(&precision);
-  
+  enforce_weights(&precision, &weights, 1.01,0.00001);
   update_time();
 }
 static void focus_handler(bool in_focus){  
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "focus");
-  
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "focus");
   touch_precision(&precision);
-   update_time();
+  update_time();
 }
 
 static void main_window_load(Window *window) {
@@ -231,18 +234,6 @@ static void main_window_load(Window *window) {
   text_layer_set_text_alignment(s_timerough_layer, GTextAlignmentCenter);
       text_layer_set_font(s_timerough_layer, fonts_get_system_font(FONT_KEY_BITHAM_42_LIGHT));
 
-  
-  #if DEBUG
- s_weather_layer = text_layer_create(GRect(0, PBL_IF_ROUND_ELSE(105, 100), bounds.size.w, 60));
-// Style the text
-text_layer_set_background_color(s_weather_layer, GColorClear);
-text_layer_set_text_color(s_weather_layer, GColorBlack);
-text_layer_set_text_alignment(s_weather_layer, GTextAlignmentCenter);
-text_layer_set_text(s_weather_layer, "Loading...");
-  // Create second custom font, apply it and add to Window
-text_layer_set_font(s_weather_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
-layer_add_child(window_get_root_layer(window), text_layer_get_layer(s_weather_layer));
-  #endif
   // Add it as a child layer to the Window's root layer
   layer_add_child(window_layer, text_layer_get_layer(s_time_layer));
   layer_add_child(window_layer, text_layer_get_layer(s_timedetail_layer));
@@ -255,20 +246,22 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_timedetail_layer);
   text_layer_destroy(s_timerough_layer);
   // Destroy weather elements
-  #if DEBUG
-text_layer_destroy(s_weather_layer);
-  #endif
-fonts_unload_custom_font(s_weather_font);
+  
 }
 
 static void init() {
-    APP_LOG(APP_LOG_LEVEL_DEBUG, "init");
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "init");
 
+  // read state
   persist_read_data(0,&precision, sizeof(precision_t));
+  persist_read_data(1,&weights, sizeof(weights_t));
+  if(weights.a == 0) {
+    weights.a = weights.b = weights.c = weights.d = weights.e = 1;
+  }
   touch_precision(&precision);
   
   // Register with TickTimerService
-tick_timer_service_subscribe(SECOND_UNIT, second_tick);
+  tick_timer_service_subscribe(SECOND_UNIT, second_tick);
   
   accel_tap_service_subscribe(tap_handler);
   app_focus_service_subscribe(focus_handler);
@@ -284,14 +277,16 @@ tick_timer_service_subscribe(SECOND_UNIT, second_tick);
   // Show the Window on the watch, with animated=true
   window_stack_push(s_main_window, true);
   // Make sure the time is displayed from the start
-update_time();
+  update_time();
 
 }
 
 static void deinit() {
- // Destroy Window
+  // Destroy Window
   window_destroy(s_main_window);
+  // save state
   persist_write_data(0,&precision, sizeof(precision_t));
+  persist_write_data(1,&weights, sizeof(weights_t));
 
 }
 
