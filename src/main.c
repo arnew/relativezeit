@@ -86,10 +86,10 @@ static void update_time() {
   time_t temp = time(NULL);
   double adjustor = ( 
     CountOnesFromInteger(precision.seconds>>60)?16:0)
-    + (CountOnesFromInteger(precision.seconds<<4)?2:0)
-    + (CountOnesFromInteger(precision.minutes)/60.0*4)
+    + (CountOnesFromInteger(precision.seconds<<4)?4:0)
+    + (CountOnesFromInteger(precision.minutes)/60.0*8)
     
-    + (CountOnesFromInteger(precision.hours)?1:0)
+    + (CountOnesFromInteger(precision.hours)?4:0)
     
     + (CountOnesFromInteger(precision.days)?0.5:0)
     ;
@@ -99,7 +99,7 @@ static void update_time() {
   char*format = NULL;
   TextLayer *layer = s_time_layer;
   slow_adj = (slow_adj*0.99 + adjustor*0.01);
-  switch((unsigned int)(slow_adj)) {
+  switch((unsigned int)(slow_adj<adjustor?adjustor:slow_adj)) {
     default:
     case 8:
     layer = s_timedetail_layer;
