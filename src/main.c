@@ -113,11 +113,11 @@ touch_precision (precision_t * precision)
       if(state == 1) 
         {
           APP_LOG(APP_LOG_LEVEL_DEBUG, "positive enforce weights");
-          enforce_weights (precision, &weights,1, 0.5, 0.0001);
+          enforce_weights (precision, &weights,1, 2, 1);
         } 
       else if (state >= 8) 
         {
-          memset(precision, 0, sizeof(precision_t));
+          memset(precision, 0x55, sizeof(precision_t));
         
           memset(&weights, 0, sizeof(weights_t));
 //          weights.a = weights.b = weights.c = weights.d = weights.e = 1;
@@ -135,16 +135,16 @@ update_precision (precision_t * precision)
 {
   shift_precision_seconds (precision);
 
-  if (precision->second_count == 60)
+  if ((precision->second_count % 60)==0)
     {
       shift_precision_minutes (precision);
       enforce_weights (precision, &weights, 0.999,-0.005, 0);
     }
-  if (precision->minute_count == 60)
+  if ((precision->minute_count % 60)==0)
     {
       shift_precision_hours (precision);
     }
-  if (precision->hour_count == 24)
+  if ((precision->hour_count % 24)==0)
     shift_precision_days (precision);
 }
 
@@ -155,11 +155,11 @@ update_time ()
   // Get a tm structure
   time_t temp = time (NULL);
   double adjustor =
-    (CountOnesFromInteger (precision.seconds >> 60) * (1+weights.a)) +
-    (CountOnesFromInteger (precision.seconds << 4) * (1+weights.b)) +
-    (CountOnesFromInteger (precision.minutes) * (1+weights.c)) +
-    (CountOnesFromInteger (precision.hours) * (1+weights.d)) +
-    (CountOnesFromInteger (precision.days) * (1+weights.e));
+    (CountOnesFromInteger (precision.seconds >> 60)/4.0 * (1+weights.a)) +
+    (CountOnesFromInteger (precision.seconds << 4)/56.0 * (1+weights.b)) +
+    (CountOnesFromInteger (precision.minutes)/60.0 * (1+weights.c)) +
+    (CountOnesFromInteger (precision.hours)/24.0 * (1+weights.d)) +
+    (CountOnesFromInteger (precision.days)/31.0 * (1+weights.e));
   //temp = ((temp + adjustor/2)/adjustor)*adjustor;
 
   // Write the current hours and minutes into a buffer
@@ -342,8 +342,15 @@ init ()
   APP_LOG (APP_LOG_LEVEL_DEBUG, "init");
 
   // read state
-  persist_read_data (0, &precision, sizeof (precision_t));
-  persist_read_data (1, &weights, sizeof (weights_t));
+  if (persist_exists(0))
+    persist_read_data (0, &precision, sizeof (precision_t));
+  else 
+    memset(&precision, 0x55, sizeof(precision_t));
+        
+  if(persist_exists(1))
+    persist_read_data (1, &weights, sizeof (weights_t));
+  else 
+    memset(&weights, 0, sizeof(weights_t));
   touch_precision (&precision);
 
   // Register with TickTimerService
