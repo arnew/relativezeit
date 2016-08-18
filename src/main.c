@@ -27,12 +27,6 @@ static weights_t weights;
 static uint64_t top64 = 0x8000000000000000ull;
 
 void
-touch_precision (precision_t * precision)
-{
-  precision->seconds |= top64;
-}
-
-void
 shift_precision_seconds (precision_t * precision)
 {
   precision->minutes |= (precision->seconds & 1) ? top64 : 0;
@@ -81,7 +75,7 @@ static double slow_adj = 7;
 
 
 void
-enforce_weights (precision_t * precision, weights_t * weights, float w,
+enforce_weights (precision_t * precision, weights_t * weights, float v, float w,
 		 float b)
 {
   int i = CountOnesFromInteger (precision->seconds >> 60),
@@ -89,17 +83,43 @@ enforce_weights (precision_t * precision, weights_t * weights, float w,
     k = CountOnesFromInteger (precision->minutes),
     l = CountOnesFromInteger (precision->hours),
     m = CountOnesFromInteger (precision->days);
-  if (i)
-    weights->a = (weights->a * w * (1 + i / 4)) + b;
-  if (j)
-    weights->b = (weights->b * w * (1 + j / 56)) + b;
-  if (k)
-    weights->c = (weights->c * w * (1 + k / 60)) + b;
-  if (l)
-    weights->d = (weights->d * w * (1 + l / 24)) + b;
-  if (m)
-    weights->e = (weights->e * w * (1 + m / 31)) + b;
+ // if (i)
+    weights->a = (weights->a * (v + w*i / 4)) + b;
+//  if (j)
+    weights->b = (weights->b * (v + w*j / 56)) + b; 
+//  if (k && CountOnesFromInteger (precision->minutes>>30))
+    weights->c = (weights->c * (v + w*k / 60)) + b;
+//  if (l && CountOnesFromInteger (precision->hours>>12))
+    weights->d = (weights->d * (v + w*l / 24)) + b;
+  //if (m && CountOnesFromInteger (precision->days>>15))
+    weights->e = (weights->e * (v + w* m / 31)) + b;
 }
+
+
+void
+touch_precision (precision_t * precision)
+{
+  static int state = 0;
+  if(precision->seconds & 0xF000000000000000)
+    {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "state: %i", state);
+      if(state == 2) 
+        {
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "positive enforce weights");
+          enforce_weights (precision, &weights,1, 0.05, 0.00001);
+        } 
+      else if (state >= 8) 
+        {
+          memset(precision, 0, sizeof(precision_t));
+          weights.a = weights.b = weights.c = weights.d = weights.e = 1;
+        }
+      state ++;
+    }
+  else if(!(state&top64))
+    state = 0;
+  precision->seconds |= top64;
+}
+
 
 void
 update_precision (precision_t * precision)
@@ -109,7 +129,7 @@ update_precision (precision_t * precision)
   if (precision->second_count == 60)
     {
       shift_precision_minutes (precision);
-      enforce_weights (precision, &weights, 0.95, 0.0);
+      enforce_weights (precision, &weights, 1,-0.005, 0.0);
     }
   if (precision->minute_count == 60)
     {
@@ -235,7 +255,6 @@ tap_handler (AccelAxisType axis, int32_t direction)
 {
   APP_LOG (APP_LOG_LEVEL_DEBUG, "tap");
   touch_precision (&precision);
-  enforce_weights (&precision, &weights, 1.01, 0.00001);
   update_time ();
 }
 
@@ -321,7 +340,6 @@ init ()
       weights.a = weights.b = weights.c = weights.d = weights.e = 1;
     }
   touch_precision (&precision);
-  enforce_weights (&precision, &weights, 1.1, 0.0001);
 
   // Register with TickTimerService
   tick_timer_service_subscribe (SECOND_UNIT, second_tick);
