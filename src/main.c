@@ -73,7 +73,14 @@ CountOnesFromInteger (uint64_t value)
 
 static double slow_adj = 7;
 
-
+inline float min(float a, float b) {
+  if (a<b) return a;
+  return b;
+}
+inline float max(float a, float b) {
+  if (a<b) return b;
+  return a;
+}
 void
 enforce_weights (precision_t * precision, weights_t * weights, float v, float w,
 		 float b)
@@ -84,15 +91,15 @@ enforce_weights (precision_t * precision, weights_t * weights, float v, float w,
     l = CountOnesFromInteger (precision->hours),
     m = CountOnesFromInteger (precision->days);
  // if (i)
-    weights->a = (weights->a * (v + w*i / 4)) + b;
+    weights->a = (weights->a * max(0,(v + w*i / 4))) + b;
 //  if (j)
-    weights->b = (weights->b * (v + w*j / 56)) + b; 
+    weights->b = (weights->b * max(0,(v + w*j / 56))) + b; 
 //  if (k && CountOnesFromInteger (precision->minutes>>30))
-    weights->c = (weights->c * (v + w*k / 60)) + b;
+    weights->c = (weights->c * max(0,(v + w*k / 60))) + b;
 //  if (l && CountOnesFromInteger (precision->hours>>12))
-    weights->d = (weights->d * (v + w*l / 24)) + b;
+    weights->d = (weights->d * max(0,(v + w*l / 24))) + b;
   //if (m && CountOnesFromInteger (precision->days>>15))
-    weights->e = (weights->e * (v + w* m / 31)) + b;
+    weights->e = (weights->e * max(0,(v + w* m / 31))) + b;
 }
 
 
@@ -103,15 +110,17 @@ touch_precision (precision_t * precision)
   if(precision->seconds & 0xF000000000000000)
     {
       APP_LOG(APP_LOG_LEVEL_DEBUG, "state: %i", state);
-      if(state == 2) 
+      if(state == 1) 
         {
           APP_LOG(APP_LOG_LEVEL_DEBUG, "positive enforce weights");
-          enforce_weights (precision, &weights,1, 0.05, 0.00001);
+          enforce_weights (precision, &weights,1, 0.5, 0.0001);
         } 
       else if (state >= 8) 
         {
           memset(precision, 0, sizeof(precision_t));
-          weights.a = weights.b = weights.c = weights.d = weights.e = 1;
+        
+          memset(&weights, 0, sizeof(weights_t));
+//          weights.a = weights.b = weights.c = weights.d = weights.e = 1;
         }
       state ++;
     }
@@ -129,7 +138,7 @@ update_precision (precision_t * precision)
   if (precision->second_count == 60)
     {
       shift_precision_minutes (precision);
-      enforce_weights (precision, &weights, 1,-0.005, 0.0);
+      enforce_weights (precision, &weights, 0.999,-0.005, 0);
     }
   if (precision->minute_count == 60)
     {
@@ -146,18 +155,18 @@ update_time ()
   // Get a tm structure
   time_t temp = time (NULL);
   double adjustor =
-    (CountOnesFromInteger (precision.seconds >> 60) * weights.a) +
-    (CountOnesFromInteger (precision.seconds << 4) * weights.b) +
-    (CountOnesFromInteger (precision.minutes) * weights.c) +
-    (CountOnesFromInteger (precision.hours) * weights.d) +
-    (CountOnesFromInteger (precision.days) * weights.e);
+    (CountOnesFromInteger (precision.seconds >> 60) * (1+weights.a)) +
+    (CountOnesFromInteger (precision.seconds << 4) * (1+weights.b)) +
+    (CountOnesFromInteger (precision.minutes) * (1+weights.c)) +
+    (CountOnesFromInteger (precision.hours) * (1+weights.d)) +
+    (CountOnesFromInteger (precision.days) * (1+weights.e));
   //temp = ((temp + adjustor/2)/adjustor)*adjustor;
 
   // Write the current hours and minutes into a buffer
   char *format = NULL;
   TextLayer *layer = s_time_layer;
   slow_adj = (slow_adj * 0.99 + adjustor * 0.01);
-  switch ((unsigned int) (slow_adj < adjustor ? adjustor : slow_adj))
+  switch ((unsigned int) max(slow_adj, adjustor))
     {
     default:
     case 8:
@@ -335,10 +344,6 @@ init ()
   // read state
   persist_read_data (0, &precision, sizeof (precision_t));
   persist_read_data (1, &weights, sizeof (weights_t));
-  if (weights.a == 0)
-    {
-      weights.a = weights.b = weights.c = weights.d = weights.e = 1;
-    }
   touch_precision (&precision);
 
   // Register with TickTimerService
