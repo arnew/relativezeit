@@ -117,7 +117,7 @@ touch_precision (precision_t * precision)
         } 
       else if (state >= 8) 
         {
-          memset(precision, 0x55, sizeof(precision_t));
+         // memset(precision, 0x55, sizeof(precision_t));
         
           memset(&weights, 0, sizeof(weights_t));
 //          weights.a = weights.b = weights.c = weights.d = weights.e = 1;
@@ -133,12 +133,13 @@ touch_precision (precision_t * precision)
 void
 update_precision (precision_t * precision)
 {
+  enforce_weights (precision, &weights, 0.99999,-0.00005, 0);
+  
   shift_precision_seconds (precision);
 
   if ((precision->second_count % 60)==0)
     {
       shift_precision_minutes (precision);
-      enforce_weights (precision, &weights, 0.999,-0.005, 0);
     }
   if ((precision->minute_count % 60)==0)
     {
