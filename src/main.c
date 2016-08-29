@@ -1,6 +1,13 @@
 #include <pebble.h>
 #include "main.h"
 
+// todo list:
+// only redraw on changes, done
+// enable logging only on debug, done
+// disable accellerometer -> doesnt seem to be a problem
+#define DEBUG 0
+
+static unsigned int last_selection;
 static Window *s_main_window;
 
 static char s_buffer[12];
@@ -77,10 +84,12 @@ inline float min(float a, float b) {
   if (a<b) return a;
   return b;
 }
+
 inline float max(float a, float b) {
   if (a<b) return b;
   return a;
 }
+
 void
 enforce_weights (precision_t * precision, weights_t * weights, float v, float w,
 		 float b)
@@ -100,19 +109,30 @@ enforce_weights (precision_t * precision, weights_t * weights, float v, float w,
     weights->d = (weights->d * max(0,(v + w*l / 24))) + b;
   //if (m && CountOnesFromInteger (precision->days>>15))
     weights->e = (weights->e * max(0,(v + w* m / 31))) + b;
+  #if DEBUG
+  APP_LOG (APP_LOG_LEVEL_DEBUG, "weights: %i %i %i %i %i",
+	   (int) (10000 * weights->a), (int) (10000 * weights->b),
+	   (int) (10000 * weights->c), (int) (10000 * weights->d),
+	   (int) (10000 * weights->e));
+  #endif
 }
 
 
 void
 touch_precision (precision_t * precision)
 {
+  last_selection = -1;
   static int state = 0;
   if(precision->seconds & 0xF000000000000000)
     {
+    #if DEBUG
       APP_LOG(APP_LOG_LEVEL_DEBUG, "state: %i", state);
+    #endif
       if(state == 1) 
         {
+        #if DEBUG
           APP_LOG(APP_LOG_LEVEL_DEBUG, "positive enforce weights");
+        #endif
           enforce_weights (precision, &weights,1, 2, 1);
         } 
       else if (state >= 8) 
@@ -147,12 +167,24 @@ update_precision (precision_t * precision)
     }
   if ((precision->hour_count % 24)==0)
     shift_precision_days (precision);
+  #if DEBUG
+  
+  APP_LOG (APP_LOG_LEVEL_DEBUG, "precision: %i:%u %i:%u %i:%u %i",
+	   CountOnesFromInteger (precision->seconds),
+	   (unsigned int) precision->second_count,
+	   CountOnesFromInteger (precision->minutes),
+	   (unsigned int) precision->minute_count,
+	   CountOnesFromInteger (precision->hours),
+	   (unsigned int) precision->hour_count,
+	   CountOnesFromInteger (precision->days));
+  #endif
 }
 
 
 static void
 update_time ()
-{
+{ 
+  
   // Get a tm structure
   time_t temp = time (NULL);
   double adjustor =
@@ -167,7 +199,15 @@ update_time ()
   char *format = NULL;
   TextLayer *layer = s_time_layer;
   slow_adj = (slow_adj * 0.99 + adjustor * 0.01);
-  switch ((unsigned int) max(slow_adj, adjustor))
+  unsigned int selection = (unsigned int) max(slow_adj, adjustor);
+    #if DEBUG
+  APP_LOG (APP_LOG_LEVEL_DEBUG, "relativity: %u %u %u", (unsigned int) adjustor,
+	   (unsigned int) slow_adj, last_selection);
+  #endif
+  if(selection < 8 && selection == last_selection )
+    return;
+    
+  switch (selection)
     {
     default:
     case 8:
@@ -236,26 +276,14 @@ update_time ()
 
   // Display this time on the TextLayer
   text_layer_set_text (layer, s_buffer);
+  last_selection =  selection;
 
-  APP_LOG (APP_LOG_LEVEL_DEBUG, "precision: %i:%u %i:%u %i:%u %i",
-	   CountOnesFromInteger (precision.seconds),
-	   (unsigned int) precision.second_count,
-	   CountOnesFromInteger (precision.minutes),
-	   (unsigned int) precision.minute_count,
-	   CountOnesFromInteger (precision.hours),
-	   (unsigned int) precision.hour_count,
-	   CountOnesFromInteger (precision.days));
-  APP_LOG (APP_LOG_LEVEL_DEBUG, "weights: %i %i %i %i %i",
-	   (int) (10000 * weights.a), (int) (10000 * weights.b),
-	   (int) (10000 * weights.c), (int) (10000 * weights.d),
-	   (int) (10000 * weights.e));
-  APP_LOG (APP_LOG_LEVEL_DEBUG, "relativity: %u %u", (unsigned int) adjustor,
-	   (unsigned int) slow_adj);
 }
 
 static void
 second_tick (struct tm *tick_time, TimeUnits units_changed)
 {
+  if(units_changed & MINUTE_UNIT) last_selection = -1;
   update_precision (&precision);
   update_time ();
 }
@@ -263,7 +291,9 @@ second_tick (struct tm *tick_time, TimeUnits units_changed)
 static void
 tap_handler (AccelAxisType axis, int32_t direction)
 {
+ #if DEBUG
   APP_LOG (APP_LOG_LEVEL_DEBUG, "tap");
+  #endif
   touch_precision (&precision);
   update_time ();
 }
@@ -271,7 +301,9 @@ tap_handler (AccelAxisType axis, int32_t direction)
 static void
 focus_handler (bool in_focus)
 {
+  #if DEBUG
   APP_LOG (APP_LOG_LEVEL_DEBUG, "focus");
+  #endif
   touch_precision (&precision);
   update_time ();
 }
@@ -340,8 +372,9 @@ main_window_unload (Window * window)
 static void
 init ()
 {
+  #if DEBUG
   APP_LOG (APP_LOG_LEVEL_DEBUG, "init");
-
+#endif
   // read state
   if (persist_exists(0))
     persist_read_data (0, &precision, sizeof (precision_t));
