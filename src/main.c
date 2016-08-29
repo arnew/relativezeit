@@ -6,7 +6,7 @@
 // only redraw on changes, done
 // enable logging only on debug, done
 // disable accellerometer -> doesnt seem to be a problem
-#define DEBUG 1
+//#define DEBUG 1
 
 static GlanceState glancing = 0;
 static unsigned int last_selection;
